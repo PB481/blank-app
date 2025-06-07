@@ -1,1 +1,6 @@
 streamlit
+pandas
+requests
+openpyxl
+xlsxwriter
+paramiko
