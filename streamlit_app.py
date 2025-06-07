@@ -4,6 +4,7 @@ import requests
 import io
 import json
 import base64 # For SFTP - will only be used conceptually
+from pathlib import Path # Added for accessing the script path
 # import paramiko # You would need to install paramiko for actual SFTP: pip install paramiko
 
 # --- Configuration (Optional: for real app, consider .streamlit/secrets.toml) ---
