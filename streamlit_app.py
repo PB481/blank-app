@@ -761,3 +761,17 @@ elif page == "4. Automated Workflows":
 
         This Streamlit app serves as a powerful interactive configurator and preview tool for defining these complex data workflows.
         """)
+
+# --- Feature: Show App Code ---
+        st.markdown("---")
+        st.header('App Source Code', divider='gray')
+
+        current_script_path = Path(__file__)
+
+    try:
+        with open(current_script_path, 'r') as f:
+        app_code = f.read()
+        with st.expander("Click to view the Python code for this app"):
+        st.code(app_code, language='python')
+        except Exception as e:
+         st.error(f"Could not load app source code: {e}")
