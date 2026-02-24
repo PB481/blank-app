@@ -25,7 +25,7 @@ from typing import List, Dict, Optional
 # ──────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-page_title=“UCITS NAV Lifecycle — Timeline Modeler”,
+page_title=“UCITS NAV Lifecycle Timeline Modeler”,
 page_icon=“🏦”,
 layout=“wide”,
 initial_sidebar_state=“expanded”,
