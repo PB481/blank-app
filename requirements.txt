@@ -4,4 +4,4 @@ requests
 openpyxl
 xlsxwriter
 paramiko
-ploty
+plotly
