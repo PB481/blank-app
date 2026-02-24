@@ -1,5 +1,5 @@
 # “””
-Irish UCITS Fund Administration Lifecycle — Daily NAV Timeline Modeler
+Irish UCITS Fund Administration Lifecycle Daily NAV Timeline Modeler
 
 A Streamlit dashboard that models and visualizes the critical-path timings
 of a daily fund administration lifecycle for an Irish UCITS fund.
