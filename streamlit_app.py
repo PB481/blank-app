@@ -1,778 +1,964 @@
+# “””
+Irish UCITS Fund Administration Lifecycle — Daily NAV Timeline Modeler
+
+A Streamlit dashboard that models and visualizes the critical-path timings
+of a daily fund administration lifecycle for an Irish UCITS fund.
+
+Valuation Point : 16:00 GMT (T)
+NAV Delivery SLA : 09:00 GMT (T+1)
+
+Multi-hub timezone support including US Eastern (EST / GMT-5).
+“””
+
 import streamlit as st
 import pandas as pd
-import requests
-import io
-import json
-import base64 # For SFTP - will only be used conceptually
-from pathlib import Path # Added for accessing the script path
-# import paramiko # You would need to install paramiko for actual SFTP: pip install paramiko
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta, time, date
+from dataclasses import dataclass
+from typing import List, Dict, Optional
 
-# --- Configuration (Optional: for real app, consider .streamlit/secrets.toml) ---
-# For demonstration purposes, API keys and credentials are not hardcoded.
-# In a real app, use st.secrets for sensitive information.
-# Example:
-# [api_credentials]
-# my_api_key = "your_api_key_here"
-# sftp_username = "sftp_user"
+# ──────────────────────────────────────────────────────────────────────
 
-# --- Utility Functions ---
+# Page config
 
-def load_data_from_uploaded_file(uploaded_file):
-    """
-    Loads data from various file formats (CSV, Excel, JSON) into a pandas DataFrame.
-    Handles common file extensions and provides basic error reporting.
-    """
-    if uploaded_file is not None:
-        file_extension = uploaded_file.name.split('.')[-1].lower()
-        st.info(f"Attempting to load file: {uploaded_file.name} with extension: .{file_extension}")
-        try:
-            if file_extension == 'csv':
-                # Use io.StringIO for text-based files
-                return pd.read_csv(io.StringIO(uploaded_file.getvalue().decode('utf-8')))
-            elif file_extension in ['xls', 'xlsx']:
-                # Use io.BytesIO for binary files
-                return pd.read_excel(uploaded_file)
-            elif file_extension == 'json':
-                # Use io.StringIO for text-based JSON
-                return pd.read_json(io.StringIO(uploaded_file.getvalue().decode('utf-8')))
-            else:
-                st.error(f"Unsupported file type for {uploaded_file.name}: .{file_extension}. Please upload CSV, Excel, or JSON.")
-                return None
-        except Exception as e:
-            st.error(f"Error reading file '{uploaded_file.name}': {e}. Please check file format and content.")
-            return None
-    return None
-
-def call_api(url, method='GET', headers=None, data=None, json_data=None):
-    """
-    Calls an external API using the requests library.
-    Supports GET, POST, PUT, and DELETE methods.
-    Returns the JSON response or None on error.
-    """
-    st.info(f"Calling API: {method} {url}")
-    try:
-        response = None
-        if method.upper() == 'GET':
-            response = requests.get(url, headers=headers, params=data)
-        elif method.upper() == 'POST':
-            response = requests.post(url, headers=headers, data=data, json=json_data)
-        elif method.upper() == 'PUT':
-            response = requests.put(url, headers=headers, data=data, json=json_data)
-        elif method.upper() == 'DELETE':
-            response = requests.delete(url, headers=headers, data=data, json=json_data)
-        else:
-            st.error("Unsupported HTTP method specified.")
-            return None
-
-        response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
-        return response.json()
-    except requests.exceptions.HTTPError as http_err:
-        st.error(f"HTTP error occurred during API call: {http_err} - Response: {response.text}")
-        return None
-    except requests.exceptions.ConnectionError as conn_err:
-        st.error(f"Connection error during API call: {conn_err}. Check URL or network connectivity.")
-        return None
-    except requests.exceptions.Timeout as timeout_err:
-        st.error(f"API call timed out: {timeout_err}. The server took too long to respond.")
-        return None
-    except requests.exceptions.RequestException as req_err:
-        st.error(f"An unexpected API request error occurred: {req_err}")
-        return None
-    except json.JSONDecodeError:
-        st.warning(f"API response is not valid JSON. Raw response: {response.text}")
-        return response.text # Return raw text if not JSON
-    except Exception as e:
-        st.error(f"An unexpected error occurred while calling the API: {e}")
-        return None
-
-def sftp_upload_simulation(host, port, username, password, remote_path, file_content_bytes):
-    """
-    Simulates an SFTP file upload.
-    In a real application, you would use paramiko here.
-    """
-    st.info(f"Simulating SFTP upload to {username}@{host}:{port}{remote_path}")
-    st.warning("This is a simulation. Actual SFTP transfer requires a backend script with SFTP client (e.g., Paramiko).")
-    # Example of what real SFTP code would look like (requires paramiko)
-    # try:
-    #     transport = paramiko.Transport((host, port))
-    #     transport.connect(username=username, password=password)
-    #     sftp = paramiko.SFTPClient.from_transport(transport)
-    #     
-    #     with sftp.open(remote_path, 'wb') as f:
-    #         f.write(file_content_bytes)
-    #     
-    #     sftp.close()
-    #     transport.close()
-    #     st.success(f"Successfully uploaded file to SFTP: {remote_path}")
-    # except Exception as e:
-    #     st.error(f"SFTP upload failed: {e}")
-    st.success(f"Simulated SFTP upload of file (size: {len(file_content_bytes)} bytes) to {remote_path} completed.")
-    return True
-
-def api_push_simulation(url, method, headers, payload):
-    """
-    Simulates pushing data to an API endpoint.
-    In a real application, you would use requests here.
-    """
-    st.info(f"Simulating API push to {url} using {method} method.")
-    st.warning("This is a simulation. Actual API push requires a backend script with HTTP client (e.g., requests).")
-    try:
-        if method.upper() == 'POST':
-            response = requests.post(url, headers=headers, json=payload)
-        elif method.upper() == 'PUT':
-            response = requests.put(url, headers=headers, json=payload)
-        else:
-            st.error("Unsupported API push method.")
-            return False
-        
-        response.raise_for_status()
-        st.success(f"Simulated API push successful! Response status: {response.status_code}")
-        st.json(response.json())
-        return True
-    except requests.exceptions.RequestException as e:
-        st.error(f"Simulated API push failed: {e}")
-        return False
-
-# --- Streamlit App Setup ---
+# ──────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Universal Data Integrator & Reporter",
-    layout="wide",
-    initial_sidebar_state="expanded"
+page_title=“UCITS NAV Lifecycle — Timeline Modeler”,
+page_icon=“🏦”,
+layout=“wide”,
+initial_sidebar_state=“expanded”,
 )
 
-st.title("📊 Universal Data Integrator & Reporter")
-st.markdown("This application allows you to ingest data, transform it, generate reports, and configure automated workflows.")
+st.markdown(”””
 
-# Initialize session state variables if they don't exist
-# Session state is crucial for persisting data across Streamlit reruns
-if 'dataframes' not in st.session_state:
-    st.session_state.dataframes = {} # Stores ingested DataFrames {name: df}
-if 'merged_df' not in st.session_state:
-    st.session_state.merged_df = None # Stores the result of a merge operation
-if 'report_df' not in st.session_state:
-    st.session_state.report_df = None # Stores the final DataFrame prepared for reporting
-if 'workflow_config' not in st.session_state:
-    st.session_state.workflow_config = {} # Stores configuration for automated publishing
+<style>
+    .main-header {
+        background: linear-gradient(135deg, #0a1628 0%, #1a2744 50%, #0d2137 100%);
+        padding: 1.5rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.2rem;
+        border-left: 4px solid #00d4aa;
+    }
+    .main-header h1 {
+        color: #ffffff; font-size: 1.6rem; margin: 0 0 0.3rem 0;
+        font-weight: 700; letter-spacing: -0.02em;
+    }
+    .main-header p { color: #8899aa; font-size: 0.85rem; margin: 0; }
 
-# --- Sidebar Navigation ---
-st.sidebar.header("Navigation")
-page = st.sidebar.radio(
-    "Go to",
-    ["1. Data Ingestion", "2. Data Transformation", "3. Report Generation", "4. Automated Workflows"]
-)
+    .sla-card {
+        padding: 1.1rem 1.3rem; border-radius: 10px;
+        text-align: center; font-weight: 600;
+    }
+    .sla-met {
+        background: linear-gradient(135deg, #0a2e1a, #0d3d22);
+        border: 1px solid #00d4aa; color: #00d4aa;
+    }
+    .sla-breach {
+        background: linear-gradient(135deg, #3d0a0a, #4d1111);
+        border: 1px solid #ff4444; color: #ff4444;
+    }
+    .sla-card .sla-label {
+        font-size: 0.70rem; text-transform: uppercase;
+        letter-spacing: 0.08em; opacity: 0.7; margin-bottom: 0.2rem;
+    }
+    .sla-card .sla-value { font-size: 1.35rem; }
 
-# --- Page: 1. Data Ingestion ---
-if page == "1. Data Ingestion":
-    st.header("1. Data Ingestion: Upload Files or Call APIs")
-    st.markdown("---")
+    .info-card {
+        background: #0e1a2e; border: 1px solid #1e2d44;
+        border-radius: 8px; padding: 0.85rem 1rem; text-align: center;
+    }
+    .info-card .label {
+        font-size: 0.66rem; text-transform: uppercase;
+        letter-spacing: 0.06em; color: #667788; margin-bottom: 0.15rem;
+    }
+    .info-card .value { font-size: 1rem; font-weight: 600; color: #c8d8e8; }
+    .info-card .sub { font-size: 0.72rem; color: #ff8844; margin-top: 0.1rem; }
 
-    st.subheader("Upload Data Files")
-    uploaded_files = st.file_uploader(
-        "Choose CSV, Excel (.xls, .xlsx), or JSON files",
-        type=["csv", "xls", "xlsx", "json"],
-        accept_multiple_files=True,
-        help="Upload multiple files at once. Each will be stored as a separate DataFrame."
-    )
+    /* TZ clock strip */
+    .tz-strip {
+        display: flex; gap: 0; border-radius: 10px;
+        overflow: hidden; border: 1px solid #1e2d44; margin-bottom: 1rem;
+    }
+    .tz-cell {
+        flex: 1; padding: 0.7rem 0.6rem; text-align: center;
+        background: #0e1a2e; border-right: 1px solid #1e2d44;
+    }
+    .tz-cell:last-child { border-right: none; }
+    .tz-cell.active { background: rgba(0,212,170,0.06); }
+    .tz-city {
+        font-size: 0.62rem; text-transform: uppercase;
+        letter-spacing: 0.07em; color: #667788; margin-bottom: 0.15rem;
+    }
+    .tz-time { font-size: 1.05rem; font-weight: 700; color: #c8d8e8; }
+    .tz-offset { font-size: 0.62rem; color: #556677; }
+    .tz-window { font-size: 0.55rem; color: #445566; margin-top: 0.1rem; }
+    .tz-dot {
+        display: inline-block; width: 6px; height: 6px;
+        border-radius: 50%; margin-right: 4px; vertical-align: middle;
+    }
+    .tz-dot.on { background: #00d4aa; }
+    .tz-dot.off { background: #ff4444; opacity: 0.5; }
 
-    if uploaded_files:
-        for i, uploaded_file in enumerate(uploaded_files):
-            # Generate a unique name for the DataFrame based on original file name
-            file_name_clean = uploaded_file.name.split('.')[0].replace(' ', '_').replace('-', '_')
-            df_name = f"Uploaded_File_{file_name_clean}_{i+1}"
-            
-            # Check if a DataFrame with this exact name already exists in session_state
-            # This prevents overwriting if a user uploads the exact same file multiple times
-            if df_name in st.session_state.dataframes:
-                # Append a number if name already exists
-                j = 1
-                while f"{df_name}_{j}" in st.session_state.dataframes:
-                    j += 1
-                df_name = f"{df_name}_{j}"
-            
-            df = load_data_from_uploaded_file(uploaded_file)
-            if df is not None:
-                st.session_state.dataframes[df_name] = df
-                st.success(f"✅ Successfully loaded '{uploaded_file.name}' as DataFrame: **'{df_name}'**")
-                with st.expander(f"Preview of {df_name} ({df.shape[0]} rows, {df.shape[1]} columns)"):
-                    st.dataframe(df.head(10)) # Show first 10 rows
-            else:
-                st.error(f"❌ Failed to load '{uploaded_file.name}'. See error message above.")
-    else:
-        st.info("No files uploaded yet. Please use the uploader above.")
+    section[data-testid="stSidebar"] { background: #0a1020; }
+    section[data-testid="stSidebar"] .stMarkdown h3 {
+        color: #00d4aa; font-size: 0.82rem; text-transform: uppercase;
+        letter-spacing: 0.08em; border-bottom: 1px solid #1a2a40;
+        padding-bottom: 0.4rem;
+    }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+</style>
 
-    st.markdown("---")
-    st.subheader("Call External APIs")
-    api_url = st.text_input(
-        "API Endpoint URL",
-        "https://jsonplaceholder.typicode.com/posts/1",
-        help="Example: https://jsonplaceholder.typicode.com/posts/1 (GET) or https://jsonplaceholder.typicode.com/posts (POST)"
-    )
-    api_method = st.selectbox("HTTP Method", ["GET", "POST", "PUT", "DELETE"])
+“””, unsafe_allow_html=True)
 
-    col_headers, col_body = st.columns(2)
-    with col_headers:
-        api_headers_input = st.text_area(
-            "Headers (JSON format, optional)",
-            "{}",
-            help="Enter headers as a JSON object, e.g., {\"Content-Type\": \"application/json\"}"
-        )
-    with col_body:
-        api_body_input = st.text_area(
-            "Request Body (JSON format, optional)",
-            "{}",
-            help="Enter request body as a JSON object for POST/PUT requests."
-        )
+# ──────────────────────────────────────────────────────────────────────
 
-    if st.button("🚀 Call API"):
-        try:
-            headers = json.loads(api_headers_input)
-            json_data_payload = None
-            if api_method.upper() in ['POST', 'PUT']:
-                json_data_payload = json.loads(api_body_input)
+# Hub & Timezone Definitions
 
-            api_response = call_api(api_url, method=api_method, headers=headers, json_data=json_data_payload)
+# ──────────────────────────────────────────────────────────────────────
 
-            if api_response:
-                st.success("API call successful!")
-                st.json(api_response) # Display raw JSON response
+@dataclass
+class HubInfo:
+short: str
+tz_name: str
+gmt_offset: float        # hours from GMT
+window_start_gmt: int    # operating window start in minutes from T 00:00 GMT
+window_end_gmt: int      # operating window end in minutes from T 00:00 GMT
+city: str
 
-                if st.checkbox("Convert API response to DataFrame?", key="convert_api_to_df"):
-                    try:
-                        # Attempt to convert various API response structures to DataFrame
-                        api_df = None
-                        if isinstance(api_response, list) and all(isinstance(item, dict) for item in api_response):
-                            api_df = pd.DataFrame(api_response)
-                        elif isinstance(api_response, dict):
-                            api_df = pd.DataFrame([api_response]) # Single dict to DataFrame
-                        else:
-                            st.warning("API response format not directly convertible to DataFrame (expected list of dicts or single dict).")
+HUB_DATA: Dict[str, HubInfo] = {
+“EMEA — Dublin”:       HubInfo(“EMEA-DUB”,  “GMT”,  0,    7*60,      19*60,     “Dublin”),
+“EMEA — Luxembourg”:   HubInfo(“EMEA-LUX”,  “CET”,  +1,   6*60,      18*60,     “Luxembourg”),
+“APAC — India”:        HubInfo(“APAC-IND”,  “IST”,  +5.5, 3*60+30,   14*60+30,  “Mumbai”),
+“APAC — Philippines”:  HubInfo(“APAC-PHL”,  “PHT”,  +8,   1*60,      12*60,     “Manila”),
+“NAM — New York”:      HubInfo(“NAM-NYC”,   “EST”,  -5,   13*60,     24*60,     “New York”),
+“NAM — US East”:       HubInfo(“NAM-USE”,   “EST”,  -5,   13*60,     29*60,     “US East”),
+}
 
-                        if api_df is not None:
-                            api_df_name_input = st.text_input(
-                                "Name for this API DataFrame",
-                                f"API_Data_{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}"
-                            )
-                            if st.button("Save API Data as DataFrame", key="save_api_df_btn"):
-                                if api_df_name_input:
-                                    st.session_state.dataframes[api_df_name_input] = api_df
-                                    st.success(f"API response saved as DataFrame: **'{api_df_name_input}'**")
-                                    with st.expander(f"Preview of {api_df_name_input}"):
-                                        st.dataframe(api_df.head())
-                                else:
-                                    st.warning("Please provide a name for the API DataFrame.")
-                    except Exception as e:
-                        st.error(f"Error converting API response to DataFrame: {e}")
-            else:
-                st.error("API call failed or returned no data.")
-        except json.JSONDecodeError:
-            st.error("Invalid JSON format detected in Headers or Request Body. Please correct it.")
-        except Exception as e:
-            st.error(f"An unexpected error occurred during API call setup: {e}")
+HUBS = list(HUB_DATA.keys())
 
-    st.markdown("---")
-    st.subheader("Currently Loaded DataFrames")
-    if st.session_state.dataframes:
-        for name, df in st.session_state.dataframes.items():
-            st.write(f"- **{name}**: {df.shape[0]} rows, {df.shape[1]} columns")
-            with st.expander(f"Show details for {name}"):
-                st.dataframe(df.head())
-                st.write(f"Columns: {', '.join(df.columns)}")
-                st.write("Data Types:")
-                st.write(df.dtypes)
-    else:
-        st.info("No DataFrames loaded yet. Upload files or call APIs above.")
+CATEGORY_COLORS = {
+“Data Ingestion”: “#3b82f6”,
+“Batch Run”: “#8b5cf6”,
+“Trade Date Processing”: “#f59e0b”,
+“Reconciliation”: “#06b6d4”,
+“Valuation”: “#ec4899”,
+“T+1 Review”: “#10b981”,
+“Publication”: “#00d4aa”,
+}
 
-# --- Page: 2. Data Transformation ---
-elif page == "2. Data Transformation":
-    st.header("2. Data Transformation: Merge, Calculate & Rename")
-    st.markdown("---")
+T_DATE = date(2025, 1, 15)
+T1_DATE = T_DATE + timedelta(days=1)
 
-    if not st.session_state.dataframes:
-        st.warning("Please ingest data in the '1. Data Ingestion' section first to perform transformations.")
-    else:
-        st.subheader("Merge DataFrames")
-        df_keys = list(st.session_state.dataframes.keys())
-        if len(df_keys) >= 2:
-            st.info("Select two DataFrames to merge. The app will automatically suggest common columns for merging.")
-            
-            col_merge1, col_merge2 = st.columns(2)
-            with col_merge1:
-                df1_name = st.selectbox("Select **First** DataFrame for Merge", df_keys, key="merge_df1_select")
-            with col_merge2:
-                df2_name = st.selectbox("Select **Second** DataFrame for Merge", df_keys, key="merge_df2_select")
+VALUATION_POINT = datetime.combine(T_DATE, time(16, 0))
+NAV_DEADLINE = datetime.combine(T1_DATE, time(9, 0))
+TIMELINE_START = datetime.combine(T_DATE, time(8, 0))
+TIMELINE_END = datetime.combine(T1_DATE, time(12, 0))
 
-            if df1_name and df2_name and df1_name != df2_name:
-                df1 = st.session_state.dataframes[df1_name]
-                df2 = st.session_state.dataframes[df2_name]
+# US East business hours marker on Gantt
 
-                common_cols = list(set(df1.columns) & set(df2.columns))
-                
-                if common_cols:
-                    st.success(f"Common columns identified: `{', '.join(common_cols)}`")
-                    merge_on_col = st.selectbox("Select column to merge on", common_cols, key="merge_on_col_select")
-                    merge_type = st.selectbox("Select merge type (how)", ["inner", "left", "right", "outer"], key="merge_type_select")
+US_OPEN_GMT = datetime.combine(T_DATE, time(13, 0))  # 08:00 EST = 13:00 GMT
 
-                    if st.button("Merge DataFrames", key="execute_merge_btn"):
-                        try:
-                            # Add suffixes to differentiate columns with same names after merge
-                            st.session_state.merged_df = pd.merge(
-                                df1, df2, on=merge_on_col, how=merge_type, 
-                                suffixes=(f'_{df1_name.replace(" ", "_")}', f'_{df2_name.replace(" ", "_")}')
-                            )
-                            st.success("✅ DataFrames merged successfully! The result is stored as 'Merged DataFrame'.")
-                            st.write("Preview of **Merged DataFrame**:")
-                            st.dataframe(st.session_state.merged_df.head(10))
-                            st.write(f"Shape of merged DataFrame: {st.session_state.merged_df.shape}")
-                        except Exception as e:
-                            st.error(f"❌ Error merging DataFrames: {e}. Ensure the merge column data types are compatible.")
-                else:
-                    st.warning("⚠️ No common columns found between selected DataFrames. Cannot perform a direct merge.")
-                    st.info("You might need to manually rename columns or create a common key in the 'Create New Data Points' section before merging.")
-            else:
-                st.info("Please select two *different* DataFrames to enable merging options.")
-        else:
-            st.info("Please upload at least two DataFrames in '1. Data Ingestion' to enable merging.")
+# ──────────────────────────────────────────────────────────────────────
 
-    st.markdown("---")
-    st.subheader("Create New Data Points by Calculations")
-    
-    # Create a list of available DataFrames, including the merged_df if it exists
-    available_dfs_for_calc = list(st.session_state.dataframes.keys())
-    if st.session_state.merged_df is not None:
-        available_dfs_for_calc.insert(0, "Merged DataFrame") # Add merged_df as the first option
+# Timezone Helpers
 
-    if not available_dfs_for_calc:
-        st.info("No DataFrames available for calculations. Please ingest data first.")
-    else:
-        target_df_calc_name = st.selectbox(
-            "Select DataFrame to perform calculations on",
-            available_dfs_for_calc,
-            key="calc_target_df_select"
-        )
-        
-        selected_df_for_calc = None
-        if target_df_calc_name == "Merged DataFrame" and st.session_state.merged_df is not None:
-            selected_df_for_calc = st.session_state.merged_df
-        elif target_df_calc_name in st.session_state.dataframes:
-            selected_df_for_calc = st.session_state.dataframes[target_df_calc_name]
+# ──────────────────────────────────────────────────────────────────────
 
-        if selected_df_for_calc is not None:
-            st.write(f"Current columns in **'{target_df_calc_name}'**: `{', '.join(selected_df_for_calc.columns)}`")
-            st.dataframe(selected_df_for_calc.head())
+def gmt_to_local(gmt_dt: datetime, offset_hours: float) -> datetime:
+“”“Convert a GMT datetime to a local datetime given an offset in hours.”””
+return gmt_dt + timedelta(hours=offset_hours)
 
-            new_column_name = st.text_input("Enter New Column Name (e.g., 'Total_Amount')", key="new_col_name_input")
-            calculation_expression = st.text_input(
-                "Enter Calculation Expression (e.g., `df[\"Price\"] * df[\"Quantity\"]` or `df[\"ColA\"] + df[\"ColB\"]`)",
-                value="df[\"Column1\"] + df[\"Column2\"]",
-                help="Use `df` to refer to the selected DataFrame. Column names must be exact and enclosed in double quotes. Basic arithmetic and pandas operations are supported."
-            )
+def gmt_to_est(gmt_dt: datetime) -> datetime:
+return gmt_to_local(gmt_dt, -5)
 
-            if st.button("✨ Apply Calculation", key="apply_calculation_btn"):
-                if new_column_name and calculation_expression:
-                    try:
-                        # Use a copy to avoid modifying the original DataFrame until successful
-                        temp_df_for_eval = selected_df_for_calc.copy()
-                        
-                        # Evaluate the expression within a safe namespace
-                        # 'df' is made available for evaluation
-                        temp_df_for_eval[new_column_name] = eval(calculation_expression, {"df": temp_df_for_eval, "pd": pd})
-                        
-                        # Update the session state only if successful
-                        if target_df_calc_name == "Merged DataFrame":
-                            st.session_state.merged_df = temp_df_for_eval
-                        else:
-                            st.session_state.dataframes[target_df_calc_name] = temp_df_for_eval
+def fmt_gmt(dt_val: datetime) -> str:
+return dt_val.strftime(”%H:%M”)
 
-                        st.success(f"✅ New column **'{new_column_name}'** created successfully in **'{target_df_calc_name}'**!")
-                        st.dataframe(temp_df_for_eval.head(10))
-                    except NameError as ne:
-                        st.error(f"❌ Calculation error: Column not found. {ne}. Please check your column names in the expression.")
-                    except SyntaxError as se:
-                        st.error(f"❌ Calculation error: Invalid Python syntax. {se}. Check your expression format.")
-                    except Exception as e:
-                        st.error(f"❌ An error occurred applying calculation: {e}. Review your expression and data types.")
-                else:
-                    st.warning("Please provide both a new column name and a calculation expression.")
-        else:
-            st.info("Please select a DataFrame from the dropdown to perform calculations.")
+def fmt_est(gmt_dt: datetime) -> str:
+return gmt_to_est(gmt_dt).strftime(”%H:%M”)
 
-    st.markdown("---")
-    st.subheader("Change Data Headers (Rename Columns)")
-    
-    available_dfs_for_rename = list(st.session_state.dataframes.keys())
-    if st.session_state.merged_df is not None:
-        available_dfs_for_rename.insert(0, "Merged DataFrame")
+def fmt_local(gmt_dt: datetime, hub_name: str) -> str:
+info = HUB_DATA.get(hub_name)
+if not info:
+return fmt_gmt(gmt_dt)
+return gmt_to_local(gmt_dt, info.gmt_offset).strftime(”%H:%M”)
 
-    if not available_dfs_for_rename:
-        st.info("No DataFrames available for renaming columns. Please ingest data first.")
-    else:
-        rename_target_df_name = st.selectbox(
-            "Select DataFrame to rename columns in",
-            available_dfs_for_rename,
-            key="rename_target_df_select"
-        )
+def is_in_operating_window(gmt_dt: datetime, hub_name: str) -> bool:
+“”“Check if a GMT datetime falls within the hub’s operating window.”””
+info = HUB_DATA.get(hub_name)
+if not info:
+return True
+# Minutes since T 00:00
+if gmt_dt.date() == T_DATE:
+mins = gmt_dt.hour * 60 + gmt_dt.minute
+else:
+mins = 24 * 60 + gmt_dt.hour * 60 + gmt_dt.minute
+return info.window_start_gmt <= mins <= info.window_end_gmt
 
-        selected_df_for_rename = None
-        if rename_target_df_name == "Merged DataFrame" and st.session_state.merged_df is not None:
-            selected_df_for_rename = st.session_state.merged_df
-        elif rename_target_df_name in st.session_state.dataframes:
-            selected_df_for_rename = st.session_state.dataframes[rename_target_df_name]
-        
-        if selected_df_for_rename is not None:
-            st.write(f"Current columns in **'{rename_target_df_name}'**: `{', '.join(selected_df_for_rename.columns)}`")
-            st.dataframe(selected_df_for_rename.head())
+def add_mins(d: datetime, minutes: int) -> datetime:
+return d + timedelta(minutes=minutes)
 
-            col_old_name, col_new_name = st.columns(2)
-            with col_old_name:
-                old_col = st.selectbox("Select Old Column Name", selected_df_for_rename.columns.tolist(), key="old_col_select")
-            with col_new_name:
-                new_col = st.text_input("Enter New Column Name", key="new_col_input")
+# ──────────────────────────────────────────────────────────────────────
 
-            if st.button("✏️ Rename Column", key="rename_column_btn"):
-                if old_col and new_col:
-                    if old_col in selected_df_for_rename.columns:
-                        try:
-                            df_renamed = selected_df_for_rename.rename(columns={old_col: new_col})
-                            if rename_target_df_name == "Merged DataFrame":
-                                st.session_state.merged_df = df_renamed
-                            else:
-                                st.session_state.dataframes[rename_target_df_name] = df_renamed
-                            st.success(f"✅ Column **'{old_col}'** renamed to **'{new_col}'** successfully in **'{rename_target_df_name}'**!")
-                            st.dataframe(df_renamed.head(10))
-                        except Exception as e:
-                            st.error(f"❌ Error renaming column: {e}.")
-                    else:
-                        st.error(f"❌ Column '{old_col}' not found in the selected DataFrame. Please select an existing column.")
-                else:
-                    st.warning("Please select an old column and provide a new column name.")
-        else:
-            st.info("Please select a DataFrame from the dropdown to rename columns.")
+# Sidebar — User Configuration
 
-# --- Page: 3. Report Generation ---
-elif page == "3. Report Generation":
-    st.header("3. Report Generation: Prepare and Review")
-    st.markdown("---")
+# ──────────────────────────────────────────────────────────────────────
 
-    st.subheader("Select Data Source for Report")
-    
-    available_dfs_for_report = list(st.session_state.dataframes.keys())
-    if st.session_state.merged_df is not None:
-        available_dfs_for_report.insert(0, "Merged DataFrame")
+with st.sidebar:
+st.markdown(”## ⚙️ Configuration”)
+st.caption(“Adjust inputs to model the NAV critical path.”)
 
-    if not available_dfs_for_report:
-        st.warning("No DataFrames available to create a report. Please ingest and transform data first.")
-        report_df_candidate = None
-    else:
-        report_source_df_name = st.selectbox(
-            "Choose a DataFrame as the base for your report",
-            available_dfs_for_report,
-            key="report_source_df_select"
-        )
+```
+# --- Processing Hubs ---
+st.markdown("### 🌐 Processing Hubs")
+hub_trade_processing = st.selectbox("Trade Processing", HUBS, index=2, key="hub_tp")
+hub_recon = st.selectbox("Reconciliations", HUBS, index=0, key="hub_recon")
+hub_accruals = st.selectbox("Income & Expense Accruals", HUBS, index=2, key="hub_acc")
+hub_corp_actions = st.selectbox("Corporate Actions", HUBS, index=0, key="hub_ca")
+hub_derivatives = st.selectbox("Derivatives Pricing", HUBS, index=0, key="hub_deriv")
+hub_nav_review = st.selectbox("NAV Review & Publication", HUBS, index=0, key="hub_nav")
 
-        report_df_candidate = None
-        if report_source_df_name == "Merged DataFrame" and st.session_state.merged_df is not None:
-            report_df_candidate = st.session_state.merged_df.copy()
-        elif report_source_df_name in st.session_state.dataframes:
-            report_df_candidate = st.session_state.dataframes[report_source_df_name].copy()
-        
-        if report_df_candidate is not None:
-            st.write(f"Preview of selected data from **'{report_source_df_name}'** for report:")
-            st.dataframe(report_df_candidate.head(10))
-            st.write(f"Shape: {report_df_candidate.shape}")
-
-            st.markdown("---")
-            st.subheader("Filter Rows and Select Columns for Report")
-            
-            all_columns = report_df_candidate.columns.tolist()
-            selected_columns = st.multiselect(
-                "Select columns to include in the report (leave empty for all columns)",
-                all_columns,
-                default=all_columns,
-                key="report_cols_multiselect"
-            )
-
-            # Optional: Add row filtering based on a column value
-            st.markdown("##### Optional: Filter Rows")
-            filter_column = st.selectbox("Select column to filter by (optional)", ["None"] + all_columns, key="filter_col_select")
-            
-            filtered_df_temp = report_df_candidate.copy() # Start with a copy for filtering
-
-            if filter_column != "None":
-                unique_values = report_df_candidate[filter_column].unique().tolist()
-                filter_value_type = st.radio(
-                    "Filter by:",
-                    ["Select from list", "Enter custom value"],
-                    key="filter_value_type_radio"
-                )
-
-                if filter_value_type == "Select from list":
-                    selected_filter_values = st.multiselect(
-                        f"Select values in '{filter_column}' to include",
-                        unique_values,
-                        key="filter_values_multiselect"
-                    )
-                    if selected_filter_values:
-                        filtered_df_temp = filtered_df_temp[filtered_df_temp[filter_column].isin(selected_filter_values)]
-                else: # Enter custom value
-                    custom_filter_value = st.text_input(
-                        f"Enter value for '{filter_column}' to include (exact match)",
-                        key="custom_filter_value_input"
-                    )
-                    if custom_filter_value:
-                        # Attempt to cast filter value to column dtype if possible, for exact match
-                        try:
-                            dtype = report_df_candidate[filter_column].dtype
-                            if pd.api.types.is_numeric_dtype(dtype):
-                                custom_filter_value = float(custom_filter_value) if '.' in custom_filter_value else int(custom_filter_value)
-                            elif pd.api.types.is_bool_dtype(dtype):
-                                custom_filter_value = custom_filter_value.lower() == 'true'
-                        except ValueError:
-                            pass # Keep as string if cannot convert
-                        filtered_df_temp = filtered_df_temp[filtered_df_temp[filter_column] == custom_filter_value]
-                    else:
-                        st.info("Enter a value to apply the filter.")
-            
-            if selected_columns:
-                st.session_state.report_df = filtered_df_temp[selected_columns].copy()
-                st.success("✅ Report data prepared for review!")
-                st.write("Final Report Preview:")
-                st.dataframe(st.session_state.report_df.head(10))
-                st.write(f"Final Report Shape: {st.session_state.report_df.shape}")
-
-                st.markdown("---")
-                st.subheader("Generate Downloadable Report")
-                report_format = st.selectbox(
-                    "Choose report format for download",
-                    ["CSV", "Excel", "JSON"],
-                    key="download_report_format_select"
-                )
-
-                if st.button("⬇️ Generate & Download Report", key="download_report_btn"):
-                    if report_format == "CSV":
-                        csv_data = st.session_state.report_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="Download CSV Report",
-                            data=csv_data,
-                            file_name="generated_report.csv",
-                            mime="text/csv",
-                            key="download_csv_btn"
-                        )
-                    elif report_format == "Excel":
-                        excel_buffer = io.BytesIO()
-                        st.session_state.report_df.to_excel(excel_buffer, index=False, engine='xlsxwriter')
-                        excel_buffer.seek(0) # Rewind the buffer to the beginning
-                        st.download_button(
-                            label="Download Excel Report",
-                            data=excel_buffer,
-                            file_name="generated_report.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="download_excel_btn"
-                        )
-                    elif report_format == "JSON":
-                        json_data = st.session_state.report_df.to_json(orient='records').encode('utf-8')
-                        st.download_button(
-                            label="Download JSON Report",
-                            data=json_data,
-                            file_name="generated_report.json",
-                            mime="application/json",
-                            key="download_json_btn"
-                        )
-                    st.success("Report generated and ready for download!")
-            else:
-                st.warning("Please select at least one column for the report.")
-        else:
-            st.info("No data selected for report generation. Please choose a DataFrame above.")
-
-# --- Page: 4. Automated Workflows ---
-elif page == "4. Automated Workflows":
-    st.header("4. Automated Workflows: Publish Reports")
-    st.markdown("---")
-
-    st.warning("Automated workflows (SFTP, API Push) require external scheduling and execution outside of this Streamlit application itself. This section helps you configure the parameters for such a workflow.")
-
-    st.subheader("Review Report for Publishing")
-    if st.session_state.report_df is None:
-        st.info("Please prepare and review a report in the '3. Report Generation' section first.")
-    else:
-        st.write("This is the report currently prepared for publishing:")
-        st.dataframe(st.session_state.report_df.head(10))
-        st.write(f"Report size: {st.session_state.report_df.shape[0]} rows, {st.session_state.report_df.shape[1]} columns.")
-        st.success("Your report is ready to be configured for a publishing workflow.")
-
-        st.markdown("---")
-        st.subheader("Configure Publishing Options")
-
-        publish_method = st.selectbox(
-            "Select publishing method",
-            ["Local Drive (Download)", "SFTP (Configure Only)", "API Push (Configure Only)"],
-            key="publish_method_select"
-        )
-
-        st.session_state.workflow_config['publish_method'] = publish_method
-
-        if publish_method == "Local Drive (Download)":
-            st.info("This option simulates generating the report and saving it locally. In an automated setup, this means saving to a designated file path.")
-            report_format_local = st.selectbox(
-                "Choose local report format",
-                ["CSV", "Excel", "JSON"],
-                key="local_report_format_select"
-            )
-            st.session_state.workflow_config['local_format'] = report_format_local
-
-            if st.button("Simulate Local Report Generation", key="simulate_local_btn"):
-                st.info(f"Simulating local report generation in {report_format_local} format...")
-                try:
-                    output_bytes = None
-                    file_name = f"published_workflow_report.{report_format_local.lower()}"
-                    mime_type = ""
-
-                    if report_format_local == "CSV":
-                        output_bytes = st.session_state.report_df.to_csv(index=False).encode('utf-8')
-                        mime_type = "text/csv"
-                    elif report_format_local == "Excel":
-                        excel_buffer = io.BytesIO()
-                        st.session_state.report_df.to_excel(excel_buffer, index=False, engine='xlsxwriter')
-                        excel_buffer.seek(0)
-                        output_bytes = excel_buffer.getvalue()
-                        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    elif report_format_local == "JSON":
-                        output_bytes = st.session_state.report_df.to_json(orient='records').encode('utf-8')
-                        mime_type = "application/json"
-                    
-                    if output_bytes:
-                        st.download_button(
-                            label=f"Download Simulated {report_format_local} Report",
-                            data=output_bytes,
-                            file_name=file_name,
-                            mime=mime_type,
-                            key="simulate_local_download_btn"
-                        )
-                        st.success("✅ Simulated local report generation and download link provided.")
-                    else:
-                        st.error("Failed to generate report for local simulation.")
-                except Exception as e:
-                    st.error(f"Error during local simulation: {e}")
-
-
-        elif publish_method == "SFTP (Configure Only)":
-            st.subheader("SFTP Connection Details")
-            st.info("These details will be used by an external script for actual SFTP transfer.")
-            st.session_state.workflow_config['sftp_host'] = st.text_input("SFTP Host (e.g., sftp.example.com)", key="sftp_host_input")
-            st.session_state.workflow_config['sftp_port'] = st.number_input("SFTP Port", value=22, key="sftp_port_input")
-            st.session_state.workflow_config['sftp_username'] = st.text_input("SFTP Username", key="sftp_username_input")
-            st.session_state.workflow_config['sftp_password'] = st.text_input("SFTP Password", type="password", key="sftp_password_input")
-            st.session_state.workflow_config['sftp_remote_path'] = st.text_input("Remote Path (e.g., /reports/daily/report.csv)", key="sftp_remote_path_input")
-            st.session_state.workflow_config['sftp_file_format'] = st.selectbox("SFTP File Format", ["CSV", "Excel", "JSON"], key="sftp_file_format_select")
-
-            if st.button("Simulate SFTP Upload", key="simulate_sftp_btn"):
-                sftp_config = st.session_state.workflow_config
-                if all(k in sftp_config for k in ['sftp_host', 'sftp_username', 'sftp_password', 'sftp_remote_path', 'sftp_file_format']):
-                    try:
-                        file_content_bytes = None
-                        if sftp_config['sftp_file_format'] == "CSV":
-                            file_content_bytes = st.session_state.report_df.to_csv(index=False).encode('utf-8')
-                        elif sftp_config['sftp_file_format'] == "Excel":
-                            excel_buffer = io.BytesIO()
-                            st.session_state.report_df.to_excel(excel_buffer, index=False, engine='xlsxwriter')
-                            excel_buffer.seek(0)
-                            file_content_bytes = excel_buffer.getvalue()
-                        elif sftp_config['sftp_file_format'] == "JSON":
-                            file_content_bytes = st.session_state.report_df.to_json(orient='records').encode('utf-8')
-
-                        if file_content_bytes:
-                            sftp_upload_simulation(
-                                sftp_config['sftp_host'],
-                                sftp_config['sftp_port'],
-                                sftp_config['sftp_username'],
-                                sftp_config['sftp_password'],
-                                sftp_config['sftp_remote_path'],
-                                file_content_bytes
-                            )
-                        else:
-                            st.error("Failed to prepare file content for SFTP simulation.")
-                    except Exception as e:
-                        st.error(f"Error during SFTP simulation: {e}")
-                else:
-                    st.warning("Please fill in all SFTP configuration details to simulate.")
-
-        elif publish_method == "API Push (Configure Only)":
-            st.subheader("API Push Details")
-            st.info("These details will be used by an external script to push data to your target API.")
-            st.session_state.workflow_config['api_push_url'] = st.text_input("Target API URL for Push", key="api_push_url_input")
-            st.session_state.workflow_config['api_push_method'] = st.selectbox("API Push Method", ["POST", "PUT"], key="api_push_method_select")
-            st.session_state.workflow_config['api_push_headers'] = st.text_area("API Push Headers (JSON format)", "{\"Content-Type\": \"application/json\"}", key="api_push_headers_input")
-            st.session_state.workflow_config['api_push_payload_type'] = st.selectbox("Payload Type", ["JSON (records)", "CSV (as string)"], key="api_push_payload_type_select")
-            
-            if st.button("Simulate API Push", key="simulate_api_push_btn"):
-                api_push_config = st.session_state.workflow_config
-                if all(k in api_push_config for k in ['api_push_url', 'api_push_method', 'api_push_headers', 'api_push_payload_type']):
-                    try:
-                        headers = json.loads(api_push_config['api_push_headers'])
-                        payload = None
-
-                        if api_push_config['api_push_payload_type'] == "JSON (records)":
-                            payload = st.session_state.report_df.to_dict(orient='records')
-                        elif api_push_config['api_push_payload_type'] == "CSV (as string)":
-                            payload = {"data": st.session_state.report_df.to_csv(index=False)}
-                        
-                        if payload:
-                            api_push_simulation(
-                                api_push_config['api_push_url'],
-                                api_push_config['api_push_method'],
-                                headers,
-                                payload
-                            )
-                        else:
-                            st.error("Failed to prepare payload for API push simulation.")
-                    except json.JSONDecodeError:
-                        st.error("Invalid JSON format detected in API Push Headers. Please correct it.")
-                    except Exception as e:
-                        st.error(f"Error during API push simulation: {e}")
-                else:
-                    st.warning("Please fill in all API Push configuration details to simulate.")
-
-        st.markdown("---")
-        st.subheader("Review and Confirm Workflow Configuration")
-        if st.session_state.workflow_config:
-            st.write("Current Workflow Configuration:")
-            st.json(st.session_state.workflow_config)
-            st.success("Configuration saved in session state. You can copy this for your automation scripts.")
-        else:
-            st.info("No workflow configured yet. Select a publishing method above.")
-
-        st.markdown("---")
-        st.markdown("### ⚙️ How to Achieve True Automation (Beyond This App)")
-        st.markdown("""
-        To run the configured workflow automatically and consistently (e.g., daily, hourly), you would typically:
-        
-        1.  **Create a dedicated Python script** (`run_workflow.py`): This script would contain the core logic for:
-            * Loading initial data (from defined sources, not interactive uploads).
-            * Applying data merges, calculations, and column renaming based on pre-defined rules or configuration.
-            * Generating the final report DataFrame.
-            * Executing the selected publishing action (SFTP, API push, or local file save) using the saved configurations.
-            
-        2.  **External Orchestration**:
-            * **Cron Jobs (Linux/macOS) / Task Scheduler (Windows)**: For basic, scheduled execution on a server.
-            * **Cloud Functions (AWS Lambda, Google Cloud Functions, Azure Functions)**: For serverless, event-driven execution, highly scalable and cost-effective for intermittent tasks.
-            * **Workflow Orchestrators (Apache Airflow, Prefect, Dagster)**: For complex, data-pipeline-centric automation with monitoring, retries, and dependencies.
-            * **CI/CD Pipelines (GitHub Actions, GitLab CI/CD)**: For triggering workflows as part of code deployments or on a schedule.
-
-        3.  **Secure Credentials**: Never hardcode API keys or SFTP passwords in your scripts. Use environment variables, a secure vault, or cloud-specific secret management services.
-
-        This Streamlit app serves as a powerful interactive configurator and preview tool for defining these complex data workflows.
-        """)
-
-# --- Feature: Show App Code ---
 st.markdown("---")
-st.header('App Source Code', divider='gray')
 
-current_script_path = Path(__file__)
+# --- Data Ingestion Cutoffs ---
+st.markdown("### 📥 Data Ingestion Cutoffs (GMT)")
+ta_file_time = st.time_input(
+    "TA Cap Stock / Dealing Files",
+    value=time(17, 0),
+    help="Time TA files (cap stock, dealing) are received on T (GMT).",
+    key="ta_time",
+)
+st.caption(f"= {fmt_est(datetime.combine(T_DATE, ta_file_time))} EST · "
+           f"{fmt_local(datetime.combine(T_DATE, ta_file_time), 'APAC — India')} IST")
 
+broker_file_time = st.time_input(
+    "Broker / Custodian Confirmations",
+    value=time(16, 30),
+    help="Time broker confirmations & custodian files arrive on T (GMT).",
+    key="broker_time",
+)
+st.caption(f"= {fmt_est(datetime.combine(T_DATE, broker_file_time))} EST · "
+           f"{fmt_local(datetime.combine(T_DATE, broker_file_time), 'APAC — India')} IST")
+
+pricing_file_time = st.time_input(
+    "Pricing Feed (WM/Reuters/Bloomberg)",
+    value=time(16, 15),
+    help="Time closing prices are available after valuation point (GMT).",
+    key="pricing_time",
+)
+st.caption(f"= {fmt_est(datetime.combine(T_DATE, pricing_file_time))} EST · "
+           f"{fmt_local(datetime.combine(T_DATE, pricing_file_time), 'APAC — India')} IST")
+
+st.markdown("---")
+
+# --- Batch File Runs ---
+st.markdown("### 🔄 Accounting System Batches (GMT)")
+batch_1_time = st.time_input(
+    "Batch Run 1 (T evening)",
+    value=time(18, 0),
+    help="First automated batch into accounting system on T (GMT).",
+    key="batch1",
+)
+st.caption(f"= {fmt_est(datetime.combine(T_DATE, batch_1_time))} EST")
+
+batch_2_time = st.time_input(
+    "Batch Run 2 (Overnight)",
+    value=time(2, 0),
+    help="Overnight batch run (T+1 early morning, GMT).",
+    key="batch2",
+)
+st.caption(f"= {fmt_est(datetime.combine(T1_DATE, batch_2_time))} EST (prev evening)")
+
+batch_3_time = st.time_input(
+    "Batch Run 3 — Final (T+1 morning)",
+    value=time(5, 30),
+    help="Final batch before NAV review on T+1 (GMT).",
+    key="batch3",
+)
+st.caption(f"= {fmt_est(datetime.combine(T1_DATE, batch_3_time))} EST")
+
+batch_duration = st.slider(
+    "Batch Run Duration (mins)", 10, 90, 30, 5, key="batch_dur"
+)
+
+st.markdown("---")
+
+# --- Processing Durations ---
+st.markdown("### ⏱️ Processing Durations")
+dur_trade = st.slider("Trade Processing (mins)", 15, 120, 45, 5, key="dur_trade")
+dur_recon = st.slider("Cash & Position Recon (mins)", 15, 120, 60, 5, key="dur_recon")
+dur_accruals = st.slider("Income / Expense Accruals (mins)", 15, 90, 30, 5, key="dur_accruals")
+dur_corp = st.slider("Corporate Actions (mins)", 10, 90, 30, 5, key="dur_corp")
+dur_deriv = st.slider("Derivatives Pricing (mins)", 15, 120, 45, 5, key="dur_deriv")
+dur_validation = st.slider("Pre-NAV Validation (mins)", 10, 60, 20, 5, key="dur_val")
+dur_nav_review = st.slider("Final NAV Review (T+1) (mins)", 15, 120, 60, 5, key="dur_nav")
+dur_nav_publish = st.slider("NAV Publication (mins)", 5, 30, 15, 5, key="dur_pub")
+```
+
+# ──────────────────────────────────────────────────────────────────────
+
+# Build the task schedule
+
+# ──────────────────────────────────────────────────────────────────────
+
+warnings: List[str] = []
+errors: List[str] = []
+
+def to_dt_t(t: time) -> datetime:
+return datetime.combine(T_DATE, t)
+
+def to_dt_t1(t: time) -> datetime:
+return datetime.combine(T1_DATE, t)
+
+# Data ingestion
+
+ta_file_dt = to_dt_t(ta_file_time)
+broker_file_dt = to_dt_t(broker_file_time)
+pricing_file_dt = to_dt_t(pricing_file_time)
+
+if pricing_file_dt < VALUATION_POINT:
+warnings.append(
+f”⚠️ Pricing feed at {pricing_file_time.strftime(’%H:%M’)} GMT “
+f”({fmt_est(pricing_file_dt)} EST) is before the 16:00 valuation point. “
+f”Prices may not reflect closing levels.”
+)
+
+# Batch runs
+
+batch1_start = to_dt_t(batch_1_time)
+batch1_end = add_mins(batch1_start, batch_duration)
+
+batch2_start = to_dt_t1(batch_2_time) if batch_2_time.hour < 12 else to_dt_t(batch_2_time)
+batch2_end = add_mins(batch2_start, batch_duration)
+
+batch3_start = to_dt_t1(batch_3_time) if batch_3_time.hour < 12 else to_dt_t(batch_3_time)
+batch3_end = add_mins(batch3_start, batch_duration)
+
+if ta_file_dt > batch1_start:
+warnings.append(
+f”⚠️ TA files arrive at {ta_file_time.strftime(’%H:%M’)} GMT which is after “
+f”Batch Run 1 at {batch_1_time.strftime(’%H:%M’)} GMT. TA data excluded from first batch.”
+)
+
+# T-Day processing
+
+trade_proc_start = max(broker_file_dt, pricing_file_dt, VALUATION_POINT)
+trade_proc_end = add_mins(trade_proc_start, dur_trade)
+
+recon_start = max(trade_proc_end, ta_file_dt)
+recon_end = add_mins(recon_start, dur_recon)
+
+accruals_start = max(pricing_file_dt, VALUATION_POINT)
+accruals_end = add_mins(accruals_start, dur_accruals)
+
+corp_start = max(pricing_file_dt, VALUATION_POINT)
+corp_end = add_mins(corp_start, dur_corp)
+
+deriv_start = max(pricing_file_dt, VALUATION_POINT)
+deriv_end = add_mins(deriv_start, dur_deriv)
+
+prenav_start = max(trade_proc_end, recon_end, accruals_end, corp_end, deriv_end)
+prenav_end = add_mins(prenav_start, dur_validation)
+
+if prenav_end > batch1_start:
+warnings.append(
+f”⚠️ Pre-NAV validation ends at {fmt_gmt(prenav_end)} GMT “
+f”({fmt_est(prenav_end)} EST) after Batch 1 ({batch_1_time.strftime(’%H:%M’)} GMT). “
+f”Processing pushed to later batches.”
+)
+
+# T+1 Processing
+
+nav_review_start = batch3_end
+nav_review_end = add_mins(nav_review_start, dur_nav_review)
+nav_pub_start = nav_review_end
+nav_pub_end = add_mins(nav_pub_start, dur_nav_publish)
+
+sla_met = nav_pub_end <= NAV_DEADLINE
+slack_minutes = (NAV_DEADLINE - nav_pub_end).total_seconds() / 60 if sla_met else 0
+breach_minutes = (nav_pub_end - NAV_DEADLINE).total_seconds() / 60 if not sla_met else 0
+
+if not sla_met:
+errors.append(
+f”🚨 **SLA BREACH**: NAV publication completes at **{fmt_gmt(nav_pub_end)} GMT** “
+f”(**{fmt_est(nav_pub_end)} EST**) on T+1, which is **{int(breach_minutes)} minutes** “
+f”past the 09:00 GMT deadline.”
+)
+
+# Hub operating window checks
+
+hub_task_pairs = [
+(hub_trade_processing, “Trade Processing”, trade_proc_start, trade_proc_end),
+(hub_recon, “Reconciliations”, recon_start, recon_end),
+(hub_accruals, “Income & Expense Accruals”, accruals_start, accruals_end),
+(hub_corp_actions, “Corporate Actions”, corp_start, corp_end),
+(hub_derivatives, “Derivatives Pricing”, deriv_start, deriv_end),
+(hub_nav_review, “Final NAV Review”, nav_review_start, nav_review_end),
+(hub_nav_review, “NAV Publication”, nav_pub_start, nav_pub_end),
+]
+
+out_of_hours_tasks = set()
+for hub_name, task_name, t_start, t_end in hub_task_pairs:
+if not is_in_operating_window(t_start, hub_name) or not is_in_operating_window(t_end, hub_name):
+info = HUB_DATA[hub_name]
+warnings.append(
+f”⚠️ **{task_name}** ({fmt_gmt(t_start)}–{fmt_gmt(t_end)} GMT) falls outside “
+f”{info.short} operating window. Local time: “
+f”{fmt_local(t_start, hub_name)}–{fmt_local(t_end, hub_name)} {info.tz_name}.”
+)
+out_of_hours_tasks.add(task_name)
+
+# ──────────────────────────────────────────────────────────────────────
+
+# Assemble task list
+
+# ──────────────────────────────────────────────────────────────────────
+
+@dataclass
+class Task:
+name: str
+start: datetime
+end: datetime
+hub: str
+category: str
+day: str = “T”
+
+tasks: List[Task] = [
+Task(“Pricing Feed Received”, pricing_file_dt, add_mins(pricing_file_dt, 5), “Market Data”, “Data Ingestion”, “T”),
+Task(“Broker / Custodian Files”, broker_file_dt, add_mins(broker_file_dt, 5), “Custody”, “Data Ingestion”, “T”),
+Task(“TA Cap Stock / Dealing Files”, ta_file_dt, add_mins(ta_file_dt, 5), “Transfer Agency”, “Data Ingestion”, “T”),
+Task(“Batch Run 1”, batch1_start, batch1_end, “Systems”, “Batch Run”, “T”),
+Task(“Batch Run 2 (Overnight)”, batch2_start, batch2_end, “Systems”, “Batch Run”, “T+1”),
+Task(“Batch Run 3 (Final)”, batch3_start, batch3_end, “Systems”, “Batch Run”, “T+1”),
+Task(“Trade Processing”, trade_proc_start, trade_proc_end, hub_trade_processing, “Trade Date Processing”, “T”),
+Task(“Cash & Position Reconciliation”, recon_start, recon_end, hub_recon, “Reconciliation”, “T”),
+Task(“Income & Expense Accruals”, accruals_start, accruals_end, hub_accruals, “Trade Date Processing”, “T”),
+Task(“Corporate Actions”, corp_start, corp_end, hub_corp_actions, “Trade Date Processing”, “T”),
+Task(“Derivatives Pricing & Processing”, deriv_start, deriv_end, hub_derivatives, “Valuation”, “T”),
+Task(“Pre-NAV Validation Checks”, prenav_start, prenav_end, hub_nav_review, “Valuation”, “T”),
+Task(“Final NAV Review”, nav_review_start, nav_review_end, hub_nav_review, “T+1 Review”, “T+1”),
+Task(“NAV Publication & Delivery”, nav_pub_start, nav_pub_end, hub_nav_review, “Publication”, “T+1”),
+]
+
+# ──────────────────────────────────────────────────────────────────────
+
+# MAIN DASHBOARD
+
+# ──────────────────────────────────────────────────────────────────────
+
+st.markdown(
+“””
+<div class="main-header">
+<h1>🏦 Irish UCITS — Daily NAV Lifecycle Modeler</h1>
+<p>Model the critical-path timings from Valuation Point (T 16:00 GMT) through
+NAV Delivery (T+1 09:00 GMT) · Multi-hub timezone support</p>
+</div>
+“””,
+unsafe_allow_html=True,
+)
+
+# ──────────────────────────────────────────────────────────────────────
+
+# Tabs: Dashboard | Source Code
+
+# ──────────────────────────────────────────────────────────────────────
+
+tab_dashboard, tab_source = st.tabs([“📊 Dashboard”, “💻 Source Code”])
+
+with tab_source:
+st.markdown(”### 💻 Application Source Code”)
+st.caption(
+“Full source for this Streamlit application. “
+“Copy or download to run locally with `streamlit run <filename>.py`.”
+)
 try:
-    with open(current_script_path, 'r') as f:
-        app_code = f.read()
-    with st.expander("Click to view the Python code for this app"):
-        st.code(app_code, language='python')
-except Exception as e:
-    st.error(f"Could not load app source code: {e}")
+import pathlib
+source_code = pathlib.Path(**file**).read_text(encoding=“utf-8”)
+except Exception:
+source_code = “# Unable to read source file.”
+
+```
+# Line count & size info
+line_count = source_code.count("\n") + 1
+size_kb = len(source_code.encode("utf-8")) / 1024
+sc1, sc2, sc3 = st.columns(3)
+sc1.metric("Lines of Code", f"{line_count:,}")
+sc2.metric("File Size", f"{size_kb:.1f} KB")
+sc3.metric("Language", "Python 3")
+
+st.code(source_code, language="python", line_numbers=True)
+
+st.download_button(
+    label="⬇️ Download Source (.py)",
+    data=source_code,
+    file_name="ucits_nav_lifecycle_app.py",
+    mime="text/x-python",
+)
+```
+
+with tab_dashboard:
+
+```
+# ── Timezone Clock Strip ──
+active_hubs = {hub_trade_processing, hub_recon, hub_accruals,
+               hub_corp_actions, hub_derivatives, hub_nav_review}
+
+tz_cells = ""
+for hub_name, info in HUB_DATA.items():
+    is_active = hub_name in active_hubs
+    vp_local = gmt_to_local(VALUATION_POINT, info.gmt_offset)
+    in_window = is_in_operating_window(VALUATION_POINT, hub_name)
+    # Operating window in local time
+    win_start_local = gmt_to_local(
+        datetime.combine(T_DATE, time(0, 0)) + timedelta(minutes=info.window_start_gmt),
+        info.gmt_offset
+    )
+    win_end_local = gmt_to_local(
+        datetime.combine(T_DATE, time(0, 0)) + timedelta(minutes=info.window_end_gmt),
+        info.gmt_offset
+    )
+    active_cls = "active" if is_active else ""
+    dot_cls = "on" if in_window else "off"
+    opacity = "" if is_active else "opacity:0.45;"
+
+    tz_cells += f"""
+    <div class="tz-cell {active_cls}" style="{opacity}">
+        <div class="tz-city"><span class="tz-dot {dot_cls}"></span>{info.city}</div>
+        <div class="tz-time">{vp_local.strftime('%H:%M')}</div>
+        <div class="tz-offset">{info.tz_name} · GMT{'+' if info.gmt_offset >= 0 else ''}{info.gmt_offset:g}</div>
+        <div class="tz-window">{win_start_local.strftime('%H:%M')}–{win_end_local.strftime('%H:%M')} local</div>
+    </div>
+    """
+
+st.markdown(f'<div class="tz-strip">{tz_cells}</div>', unsafe_allow_html=True)
+st.caption("🟢 Hub online at Valuation Point (16:00 GMT) · 🔴 Hub offline · Highlighted = assigned to tasks")
+
+
+# ── Top-level metrics ──
+col_sla, col_nav, col_slack, col_vp, col_hubs = st.columns([1.3, 1, 1, 1, 1])
+
+with col_sla:
+    sla_class = "sla-met" if sla_met else "sla-breach"
+    sla_icon = "✅ SLA MET" if sla_met else "❌ SLA BREACH"
+    st.markdown(
+        f'<div class="sla-card {sla_class}">'
+        f'<div class="sla-label">NAV Delivery SLA</div>'
+        f'<div class="sla-value">{sla_icon}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+with col_nav:
+    st.markdown(
+        f'<div class="info-card">'
+        f'<div class="label">NAV Published</div>'
+        f'<div class="value">{fmt_gmt(nav_pub_end)} GMT</div>'
+        f'<div class="sub">{fmt_est(nav_pub_end)} EST</div></div>',
+        unsafe_allow_html=True,
+    )
+
+with col_slack:
+    if sla_met:
+        st.markdown(
+            f'<div class="info-card">'
+            f'<div class="label">Buffer to SLA</div>'
+            f'<div class="value" style="color:#00d4aa">+{int(slack_minutes)} mins</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="info-card">'
+            f'<div class="label">SLA Overrun</div>'
+            f'<div class="value" style="color:#ff4444">-{int(breach_minutes)} mins</div></div>',
+            unsafe_allow_html=True,
+        )
+
+with col_vp:
+    st.markdown(
+        f'<div class="info-card">'
+        f'<div class="label">Valuation Point</div>'
+        f'<div class="value">16:00 GMT</div>'
+        f'<div class="sub">11:00 EST</div></div>',
+        unsafe_allow_html=True,
+    )
+
+with col_hubs:
+    active_short = sorted({HUB_DATA[h].short for h in active_hubs})
+    st.markdown(
+        f'<div class="info-card">'
+        f'<div class="label">Active Hubs</div>'
+        f'<div class="value">{len(active_hubs)} hubs</div>'
+        f'<div class="sub" style="font-size:0.6rem;color:#8899aa">{" · ".join(active_short)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown("")
+
+# ── Warnings & Errors ──
+for e in errors:
+    st.error(e)
+for w in warnings:
+    st.warning(w)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Gantt Chart with dual-timezone axis
+# ──────────────────────────────────────────────────────────────────────
+st.markdown("### 📊 Lifecycle Timeline — Trade Date to T+1")
+st.caption("Primary axis: GMT · Orange markers: US Eastern (EST / GMT−5)")
+
+gantt_data = []
+for t in tasks:
+    hub_info = HUB_DATA.get(t.hub)
+    hub_short = hub_info.short if hub_info else t.hub
+    tz_name = hub_info.tz_name if hub_info else "GMT"
+    local_start = fmt_local(t.start, t.hub) if hub_info else fmt_gmt(t.start)
+    local_end = fmt_local(t.end, t.hub) if hub_info else fmt_gmt(t.end)
+    dur_mins = int((t.end - t.start).total_seconds() / 60)
+
+    gantt_data.append({
+        "Task": t.name,
+        "Start": t.start,
+        "Finish": t.end,
+        "Hub": hub_short,
+        "Category": t.category,
+        "Day": t.day,
+        "Duration": f"{dur_mins} mins",
+        "GMT": f"{fmt_gmt(t.start)} → {fmt_gmt(t.end)}",
+        "EST": f"{fmt_est(t.start)} → {fmt_est(t.end)}",
+        "Local": f"{local_start} → {local_end} {tz_name}" if tz_name != "GMT" else "",
+    })
+
+df_gantt = pd.DataFrame(gantt_data)
+
+fig = px.timeline(
+    df_gantt,
+    x_start="Start",
+    x_end="Finish",
+    y="Task",
+    color="Category",
+    color_discrete_map=CATEGORY_COLORS,
+    hover_data=["Hub", "Duration", "Day", "GMT", "EST", "Local"],
+    title="",
+)
+
+fig.update_yaxes(autorange="reversed")
+
+# Valuation Point
+fig.add_vline(
+    x=VALUATION_POINT, line_dash="dash", line_color="#ff9933", line_width=2,
+    annotation_text="VP 16:00 GMT (11:00 EST)",
+    annotation_position="top left",
+    annotation_font_color="#ff9933", annotation_font_size=11,
+)
+
+# SLA Deadline
+fig.add_vline(
+    x=NAV_DEADLINE, line_dash="dash", line_color="#ff4444", line_width=2,
+    annotation_text="SLA 09:00 GMT (04:00 EST)",
+    annotation_position="top left",
+    annotation_font_color="#ff4444", annotation_font_size=11,
+)
+
+# Midnight
+midnight = datetime.combine(T1_DATE, time(0, 0))
+fig.add_vline(
+    x=midnight, line_dash="dot", line_color="#445566", line_width=1,
+    annotation_text="Midnight GMT (19:00 EST)",
+    annotation_position="bottom left",
+    annotation_font_color="#667788", annotation_font_size=10,
+)
+
+# US East market open (08:00 EST = 13:00 GMT)
+fig.add_vline(
+    x=US_OPEN_GMT, line_dash="dot", line_color="#ff8844", line_width=1.5,
+    annotation_text="US East Opens 08:00 EST",
+    annotation_position="bottom right",
+    annotation_font_color="#ff8844", annotation_font_size=10,
+)
+
+# SLA breach zone
+fig.add_vrect(
+    x0=NAV_DEADLINE, x1=TIMELINE_END,
+    fillcolor="rgba(255,68,68,0.07)", line_width=0,
+    annotation_text="SLA Breach Zone",
+    annotation_position="top right",
+    annotation_font_color="#ff4444", annotation_font_size=10,
+)
+
+# US East operating hours zone (subtle)
+fig.add_vrect(
+    x0=US_OPEN_GMT, x1=TIMELINE_END,
+    fillcolor="rgba(255,136,68,0.03)", line_width=0,
+)
+
+fig.update_layout(
+    plot_bgcolor="#0a1628",
+    paper_bgcolor="#0a1628",
+    font=dict(color="#c8d8e8", size=12),
+    height=540,
+    margin=dict(l=10, r=30, t=30, b=30),
+    xaxis=dict(
+        title="",
+        gridcolor="#1a2a40",
+        range=[TIMELINE_START, TIMELINE_END],
+        dtick=3600000 * 2,  # 2-hour ticks
+        tickformat="%H:%M\n%d %b",
+    ),
+    yaxis=dict(title="", gridcolor="#1a2a40"),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=-0.22,
+        xanchor="center", x=0.5, font=dict(size=11),
+    ),
+    hoverlabel=dict(bgcolor="#1a2a40", font_size=12),
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Detailed Schedule Table with GMT + EST + Local columns
+# ──────────────────────────────────────────────────────────────────────
+with st.expander("📋 Detailed Chronological Schedule", expanded=True):
+    table_rows = []
+    for t in sorted(tasks, key=lambda x: x.start):
+        duration_mins = int((t.end - t.start).total_seconds() / 60)
+        hub_info = HUB_DATA.get(t.hub)
+        hub_short = hub_info.short if hub_info else t.hub
+        tz_name = hub_info.tz_name if hub_info else "GMT"
+
+        # Status logic
+        if t.category == "Data Ingestion":
+            status = "📥 Received"
+        elif t.category == "Batch Run":
+            status = "⚙️ Automated"
+        elif t.name in out_of_hours_tasks:
+            status = "🌙 Out of Hours"
+        elif t.end <= VALUATION_POINT:
+            status = "⏳ Pre-VP"
+        elif t.day == "T+1" and t.end > NAV_DEADLINE:
+            status = "🚨 Past SLA"
+        elif t.day == "T+1":
+            status = "🔍 Review"
+        else:
+            status = "✅ Scheduled"
+
+        # Local time for non-GMT hubs
+        local_col = ""
+        if hub_info and hub_info.tz_name not in ("GMT",):
+            local_col = f"{fmt_local(t.start, t.hub)}–{fmt_local(t.end, t.hub)} {tz_name}"
+
+        table_rows.append({
+            "Day": t.day,
+            "Task": t.name,
+            "Start (GMT)": fmt_gmt(t.start),
+            "End (GMT)": fmt_gmt(t.end),
+            "Start (EST)": fmt_est(t.start),
+            "End (EST)": fmt_est(t.end),
+            "Duration": f"{duration_mins} min",
+            "Hub": hub_short,
+            "Hub Local Time": local_col,
+            "Status": status,
+        })
+
+    df_table = pd.DataFrame(table_rows)
+    st.dataframe(
+        df_table,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Day": st.column_config.TextColumn(width="small"),
+            "Task": st.column_config.TextColumn(width="large"),
+            "Start (GMT)": st.column_config.TextColumn(width="small"),
+            "End (GMT)": st.column_config.TextColumn(width="small"),
+            "Start (EST)": st.column_config.TextColumn(width="small"),
+            "End (EST)": st.column_config.TextColumn(width="small"),
+            "Duration": st.column_config.TextColumn(width="small"),
+            "Hub Local Time": st.column_config.TextColumn(width="medium"),
+            "Status": st.column_config.TextColumn(width="small"),
+        },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Critical Path Analysis
+# ──────────────────────────────────────────────────────────────────────
+st.markdown("### 🔗 Critical Path Analysis")
+
+cp_col1, cp_col2 = st.columns(2)
+
+with cp_col1:
+    st.markdown("**Critical Path Sequence**")
+    critical_path = [
+        ("Valuation Point", VALUATION_POINT, VALUATION_POINT, "EMEA — Dublin"),
+        ("Pricing Feed Received", pricing_file_dt, pricing_file_dt, "Market Data"),
+        ("Trade Processing", trade_proc_start, trade_proc_end, hub_trade_processing),
+        ("TA Files Received", ta_file_dt, ta_file_dt, "Transfer Agency"),
+        ("Cash & Position Recon", recon_start, recon_end, hub_recon),
+        ("Pre-NAV Validation", prenav_start, prenav_end, hub_nav_review),
+        ("Batch Run 1", batch1_start, batch1_end, "Systems"),
+        ("Batch Run 2", batch2_start, batch2_end, "Systems"),
+        ("Batch Run 3 (Final)", batch3_start, batch3_end, "Systems"),
+        ("Final NAV Review", nav_review_start, nav_review_end, hub_nav_review),
+        ("NAV Publication", nav_pub_start, nav_pub_end, hub_nav_review),
+    ]
+
+    for i, (name, start, end, hub) in enumerate(critical_path):
+        marker = "🟢" if end <= NAV_DEADLINE else "🔴"
+        day_lbl = "T" if start.date() == T_DATE else "T+1"
+
+        if start == end:
+            time_str = f"{fmt_gmt(start)} GMT"
+            est_str = f"{fmt_est(start)} EST"
+        else:
+            time_str = f"{fmt_gmt(start)} → {fmt_gmt(end)} GMT"
+            est_str = f"{fmt_est(start)} → {fmt_est(end)} EST"
+
+        # Hub local time
+        hub_info = HUB_DATA.get(hub)
+        local_str = ""
+        if hub_info and hub_info.tz_name not in ("GMT", "EST"):
+            if start == end:
+                local_str = f" · {fmt_local(start, hub)} {hub_info.tz_name}"
+            else:
+                local_str = f" · {fmt_local(start, hub)}→{fmt_local(end, hub)} {hub_info.tz_name}"
+
+        st.markdown(
+            f"{marker} **{name}** — {time_str} ({day_lbl})  \n"
+            f"<small style='color:#ff8844'>{est_str}</small>"
+            f"<small style='color:#667788'>{local_str}</small>",
+            unsafe_allow_html=True,
+        )
+
+        if i < len(critical_path) - 1:
+            next_start = critical_path[i + 1][1]
+            gap = (next_start - end).total_seconds() / 60
+            if gap > 0:
+                st.caption(f"  ↳ {int(gap)} min gap")
+            elif gap < 0:
+                st.caption(f"  ↳ ⚡ Parallel / overlap ({int(abs(gap))} min)")
+
+with cp_col2:
+    st.markdown("**Processing Hub Allocation**")
+
+    hub_workload = {}
+    for t in tasks:
+        hub_info = HUB_DATA.get(t.hub)
+        hub_key = hub_info.short if hub_info else t.hub
+        tz = hub_info.tz_name if hub_info else "GMT"
+        dur = int((t.end - t.start).total_seconds() / 60)
+        if hub_key not in hub_workload:
+            hub_workload[hub_key] = {"tasks": 0, "total_mins": 0, "tz": tz}
+        hub_workload[hub_key]["tasks"] += 1
+        hub_workload[hub_key]["total_mins"] += dur
+
+    hub_df = pd.DataFrame([
+        {"Hub": k, "Timezone": v["tz"], "Tasks": v["tasks"], "Total Duration (mins)": v["total_mins"]}
+        for k, v in sorted(hub_workload.items(), key=lambda x: -x[1]["total_mins"])
+    ])
+    st.dataframe(hub_df, use_container_width=True, hide_index=True)
+
+    st.markdown("**Time Budget Breakdown**")
+    total_processing = sum(
+        (t.end - t.start).total_seconds() / 60
+        for t in tasks
+        if t.category not in ("Data Ingestion", "Batch Run")
+    )
+    total_batch = sum(
+        (t.end - t.start).total_seconds() / 60
+        for t in tasks
+        if t.category == "Batch Run"
+    )
+    total_window = (NAV_DEADLINE - VALUATION_POINT).total_seconds() / 60
+
+    st.markdown(
+        f"- Total processing window: **{int(total_window)} mins** (VP → SLA)\n"
+        f"- Aggregate processing time: **{int(total_processing)} mins**\n"
+        f"- Aggregate batch time: **{int(total_batch)} mins**\n"
+        f"- Parallelism benefit: tasks run concurrently across hubs"
+    )
+
+    # EST conversion reference
+    st.markdown("**Key Time Conversions**")
+    st.markdown(
+        "| Milestone | GMT | EST |\n"
+        "|---|---|---|\n"
+        "| Valuation Point | 16:00 | 11:00 |\n"
+        "| Midnight | 00:00 T+1 | 19:00 T |\n"
+        "| SLA Deadline | 09:00 T+1 | 04:00 T+1 |\n"
+        f"| NAV Published | {fmt_gmt(nav_pub_end)} T+1 | {fmt_est(nav_pub_end)} |\n"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Dependency Logic & Validation
+# ──────────────────────────────────────────────────────────────────────
+with st.expander("🔍 Dependency Validation & Rule Checks"):
+    # Check if any US/EST hub tasks are out of hours
+    any_est_ooh = any(
+        HUB_DATA.get(hub, HubInfo("","",0,0,0,"")).tz_name == "EST"
+        and (not is_in_operating_window(t_start, hub) or not is_in_operating_window(t_end, hub))
+        for hub, _, t_start, t_end in hub_task_pairs
+    )
+
+    checks = [
+        ("Pricing feed arrives after Valuation Point",
+         pricing_file_dt >= VALUATION_POINT,
+         f"Pricing at {pricing_file_time.strftime('%H:%M')} GMT "
+         f"({fmt_est(pricing_file_dt)} EST), VP at 16:00 GMT (11:00 EST)"),
+
+        ("Broker files arrive before Trade Processing starts",
+         broker_file_dt <= trade_proc_start,
+         f"Broker at {broker_file_time.strftime('%H:%M')} GMT, "
+         f"processing at {fmt_gmt(trade_proc_start)} GMT"),
+
+        ("TA files arrive before Reconciliation starts",
+         ta_file_dt <= recon_start,
+         f"TA at {ta_file_time.strftime('%H:%M')} GMT, "
+         f"recon at {fmt_gmt(recon_start)} GMT"),
+
+        ("All T-day tasks complete before Batch 1",
+         prenav_end <= batch1_start,
+         f"Pre-NAV ends {fmt_gmt(prenav_end)} GMT, "
+         f"Batch 1 at {batch_1_time.strftime('%H:%M')} GMT"),
+
+        ("Batch runs are in sequential order",
+         batch1_end <= batch2_start and batch2_end <= batch3_start,
+         f"B1→B2→B3: {fmt_gmt(batch1_end)} → {fmt_gmt(batch2_start)} → "
+         f"{fmt_gmt(batch3_start)} GMT"),
+
+        ("NAV Review starts after final batch",
+         nav_review_start >= batch3_end,
+         f"Review at {fmt_gmt(nav_review_start)} GMT, "
+         f"Batch 3 ends {fmt_gmt(batch3_end)} GMT"),
+
+        ("NAV published before 09:00 GMT T+1 SLA",
+         sla_met,
+         f"Publication at {fmt_gmt(nav_pub_end)} GMT "
+         f"({fmt_est(nav_pub_end)} EST), deadline 09:00 GMT (04:00 EST)"),
+
+        ("US East / EST hub tasks within operating hours",
+         not any_est_ooh,
+         f"US East window: 08:00–00:00 EST (13:00–05:00 GMT T+1)"),
+    ]
+
+    for label, passed, detail in checks:
+        icon = "✅" if passed else "❌"
+        st.markdown(
+            f"{icon} **{label}**  \n"
+            f"<small style='color:#667788'>{detail}</small>",
+            unsafe_allow_html=True,
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Footer
+# ──────────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.caption(
+    "Irish UCITS NAV Lifecycle Modeler · Fund Type: UCITS V · "
+    "Valuation Point: 16:00 GMT (11:00 EST) · SLA: 09:00 GMT T+1 (04:00 EST) · "
+    "All primary times in GMT · For modelling purposes only"
+)
